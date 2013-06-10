@@ -1,0 +1,18 @@
+fuse filesystem interface to fht devices usin busware radio.
+
+Copyright © 2013 John Hedges <john@drystone.co.uk>
+
+Depends on libfuse (>=2.9)
+
+To run
+$ fhtfs -D <ttydevice> [fuseopts] <mountpoint>
+
+A file is created in the mountpoint for each fht device, containing
+'1' if the channel is set high or '0' if set low. FHT devices can be
+controlled by writing a '0' or '1' to their corresponding file.
+
+See License for COPYING.
+
+See INSTALL for installation instructions.
+
+Please send bug reports to John Hedges <john@drystone.co.uk>
