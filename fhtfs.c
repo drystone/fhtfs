@@ -178,34 +178,28 @@ static int _send_command(const char * command, char * response_buf, size_t bufsi
     return 0;
 }
 
-static fht8v * _add_fht(const char * code)
+static void _switch_fht(fht8v *p)
+{
+    char buf[64];
+    sprintf(buf, "T%s01a6%s", p->code, p->state == fht_on ? "FF" : "00");
+    _send_command(buf, NULL, 0);
+}
+
+static fht8v * _add_fht(const char * code, fht_state s)
 {
     fht8v * p;
     pthread_mutex_lock(&_list_mutex);
-    p = _fht_from_code(code);
-    if (!p) {
-        p = malloc(sizeof(fht8v));
-        if (p) {
-            strcpy(p->code, code);
-            p->ctime = p->mtime = time(NULL);
-            p->state = fht_off;
-            p->next = _fht_list;
-            _fht_list = p;
-        }
+    p = malloc(sizeof(fht8v));
+    if (p) {
+        strcpy(p->code, code);
+        p->ctime = p->mtime = time(NULL);
+        p->state = s;
+        p->next = _fht_list;
+        _fht_list = p;
+        _switch_fht(p);
     }
     pthread_mutex_unlock(&_list_mutex);
     return p;
-}
-
-static void _switch_fht(fht8v * p, fht_state s)
-{
-    pthread_mutex_lock(&_list_mutex);
-    char buf[64];
-    sprintf(buf, "T%s01a6%s", p->code, s == fht_on ? "FF" : "00");
-    _send_command(buf, NULL, 0);
-    p->state = s;
-    p->mtime = time(NULL);
-    pthread_mutex_unlock(&_list_mutex);
 }
 
 static int _open_device() {
@@ -255,21 +249,19 @@ static void * _init(struct fuse_conn_info * conn)
     // get house id
     _send_command("T01", buf, sizeof(buf));
     _house_code = (unsigned int)strtol(buf, NULL, 16);
-printf("%x\n", _house_code);
+
     // get current channel states
     _send_command("T10", buf, sizeof(buf));
     p = buf;
     while (1) {
         unsigned int device_id, state, count;
-        fht8v * f;
         char code[16];
 
         if (sscanf(p, "%x:A6%x%n", &device_id, &state, &count) < 2)
             break;
 
         sprintf(code, "%x", _house_code + (device_id << 8));
-        f = _add_fht(code);
-        _switch_fht(f, state == 0 ? fht_off : fht_on);
+        _add_fht(code, state == 0 ? fht_off : fht_on);
 
         p += count;
     }
@@ -335,7 +327,7 @@ static int _create(const char *path, mode_t mode, struct fuse_file_info *fi)
         if (!strchr("0123456789abcdef", *p))
             return -1;
 
-    _add_fht(code);
+    _add_fht(code, fht_off);
     return 0;
 }
 
@@ -363,6 +355,7 @@ static int _write(const char *path, const char *buf, size_t size, off_t offset,
                       struct fuse_file_info *fi)
 {
     fht8v * p = _fht_from_path(path);
+    fht_state s;
 
     if (!p)
         return -ENOENT;
@@ -370,7 +363,14 @@ static int _write(const char *path, const char *buf, size_t size, off_t offset,
     if (!size || offset)
         return 0;
 
-    _switch_fht(p, *buf == '1' ? fht_on : fht_off);
+    pthread_mutex_lock(&_list_mutex);
+    s = *buf == '1' ? fht_on : fht_off;
+    if (s != p->state) {
+        p->state = s;
+        _switch_fht(p);
+    }
+    p->mtime = time(NULL);
+    pthread_mutex_unlock(&_list_mutex);
 
     return size;
 }
